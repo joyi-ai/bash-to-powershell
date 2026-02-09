@@ -10,6 +10,23 @@ import { lex } from './lexer.js';
 import { parse } from './parser.js';
 
 // ============================================================
+// LOOKUP TABLES
+// ============================================================
+
+// Lookup table: characters safe to leave unquoted in PowerShell
+// a-zA-Z0-9 _ . / : - * ? = @ %
+const SAFE_UNQUOTED = new Uint8Array(128);
+for (const ch of 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_./:*-?=@%') {
+  SAFE_UNQUOTED[ch.charCodeAt(0)] = 1;
+}
+
+// Lookup table: characters that need escaping in PS double quotes (` $ ")
+const PS_DQ_ESCAPE = new Uint8Array(128);
+PS_DQ_ESCAPE[0x60] = 1; // `
+PS_DQ_ESCAPE[0x24] = 1; // $
+PS_DQ_ESCAPE[0x22] = 1; // "
+
+// ============================================================
 // SPECIAL VARIABLE MAPPINGS
 // ============================================================
 
@@ -47,10 +64,25 @@ function escapePsSingleQuote(s: string): string {
 
 /** Escape a string for use inside PowerShell double quotes */
 function escapePsDoubleQuote(s: string): string {
-  return s
-    .replace(/`/g, '``')
-    .replace(/\$/g, '`$')
-    .replace(/"/g, '`"');
+  // Fast path: no special chars
+  let hasSpecial = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 128 && PS_DQ_ESCAPE[c]) { hasSpecial = true; break; }
+  }
+  if (!hasSpecial) return s;
+
+  // Slow path: build escaped string
+  let result = '';
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 128 && PS_DQ_ESCAPE[c]) {
+      result += s.slice(start, i) + '`' + s[i];
+      start = i + 1;
+    }
+  }
+  return result + s.slice(start);
 }
 
 /**
@@ -63,8 +95,13 @@ function translateVarName(name: string, braced: boolean): string {
   }
 
   // Numeric args ($1, $2, etc.)
-  if (/^[0-9]+$/.test(name) && name !== '0') {
-    return `$args[${parseInt(name, 10) - 1}]`;
+  if (name.length > 0 && name !== '0') {
+    let allDigits = true;
+    for (let i = 0; i < name.length; i++) {
+      const c = name.charCodeAt(i);
+      if (c < 0x30 || c > 0x39) { allDigits = false; break; }
+    }
+    if (allDigits) return `$args[${parseInt(name, 10) - 1}]`;
   }
 
   // Special named vars that map to non-env targets
@@ -154,9 +191,13 @@ function translateLiteral(part: LiteralPart, ctx: TransformContext): string {
   if (value === '') return "''";
   // PowerShell special values — never quote these
   if (value === '$null' || value === '$true' || value === '$false') return value;
-  if (/^[a-zA-Z0-9_.\/:\-\*\?=@%]+$/.test(value)) {
-    return value; // safe unquoted
+  // Check if all chars are safe unquoted via lookup table
+  let safe = true;
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    if (c >= 128 || !SAFE_UNQUOTED[c]) { safe = false; break; }
   }
+  if (safe) return value;
   // Contains spaces or PS-special chars — wrap in single quotes
   return `'${escapePsSingleQuote(value)}'`;
 }
@@ -218,20 +259,22 @@ function translateCompoundWord(parts: WordPart[], ctx: TransformContext): string
 
 /** Translate /tmp paths in command arguments (not /dev/* which is redirect-only) */
 function translatePathInArgs(word: WordNode): WordNode {
-  if (word.parts.length === 1 && word.parts[0].type === 'Literal') {
-    const val = word.parts[0].value;
-    if (val === '/tmp' || val === '/tmp/') {
-      return { type: 'Word', parts: [{ type: 'Variable', name: 'TEMP', braced: false }] };
-    }
-    if (val.startsWith('/tmp/')) {
-      return {
-        type: 'Word',
-        parts: [
-          { type: 'Variable', name: 'TEMP', braced: false },
-          { type: 'Literal', value: '\\' + val.slice(5), quoting: 'unquoted' },
-        ],
-      };
-    }
+  if (word.parts.length !== 1 || word.parts[0].type !== 'Literal') return word;
+  const val = word.parts[0].value;
+  // Fast reject: if first char isn't /, no path to translate
+  if (val.charCodeAt(0) !== 0x2F) return word;
+  if (val === '/tmp' || val === '/tmp/') {
+    return { type: 'Word', parts: [{ type: 'Variable', name: 'TEMP', braced: false }] };
+  }
+  if (val.charCodeAt(1) === 0x74 /* t */ && val.charCodeAt(2) === 0x6D /* m */ &&
+      val.charCodeAt(3) === 0x70 /* p */ && val.charCodeAt(4) === 0x2F /* / */) {
+    return {
+      type: 'Word',
+      parts: [
+        { type: 'Variable', name: 'TEMP', braced: false },
+        { type: 'Literal', value: '\\' + val.slice(5), quoting: 'unquoted' },
+      ],
+    };
   }
   return word;
 }
@@ -390,11 +433,15 @@ function translateSimpleCommand(cmd: SimpleCommandNode, ctx: TransformContext): 
 
 /** Extract the plain string from a WordNode (for command name matching) */
 function wordToString(word: WordNode): string {
-  return word.parts.map(p => {
-    if (p.type === 'Literal') return p.value;
-    if (p.type === 'Variable') return `$${p.name}`;
-    if (p.type === 'CommandSubstitution') return `$(${p.command})`;
-    if (p.type === 'Glob') return p.pattern;
-    return '';
-  }).join('');
+  const parts = word.parts;
+  if (parts.length === 1 && parts[0].type === 'Literal') return parts[0].value;
+  let result = '';
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.type === 'Literal') result += p.value;
+    else if (p.type === 'Variable') result += '$' + p.name;
+    else if (p.type === 'CommandSubstitution') result += '$(' + p.command + ')';
+    else if (p.type === 'Glob') result += p.pattern;
+  }
+  return result;
 }
