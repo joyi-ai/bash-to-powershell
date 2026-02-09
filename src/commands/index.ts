@@ -11,10 +11,12 @@ import { awkTranslator } from './awk.js';
 import { wcTranslator } from './wc.js';
 import { whichTranslator, psTranslator, killTranslator } from './system.js';
 import { curlTranslator, wgetTranslator } from './network.js';
-import { sortTranslator, uniqTranslator, trTranslator, teeTranslator, diffTranslator, xargsTranslator } from './text-utils.js';
+import { cutTranslator, sortTranslator, uniqTranslator, trTranslator, teeTranslator, diffTranslator, xargsTranslator } from './text-utils.js';
 import { basenameTranslator, dirnameTranslator, realpathTranslator, readlinkTranslator } from './path-utils.js';
 import { exportTranslator, unsetTranslator, envTranslator } from './env-utils.js';
 import { testTranslator } from './test.js';
+import { lsofTranslator, pkillTranslator, killallTranslator, pgrepTranslator } from './process.js';
+import { zipTranslator, unzipTranslator } from './archive.js';
 
 export interface TranslatedCommand {
   command: string;
@@ -78,6 +80,13 @@ register('unset', unsetTranslator);
 register('env', envTranslator);
 register('test', testTranslator);
 register('[', testTranslator);
+register('cut', cutTranslator);
+register('lsof', lsofTranslator);
+register('pkill', pkillTranslator);
+register('killall', killallTranslator);
+register('pgrep', pgrepTranslator);
+register('zip', zipTranslator);
+register('unzip', unzipTranslator);
 
 // true/false
 register('true', (_cmd, _ctx, _tw) => ({ command: '$true', warnings: [], usedFallback: true }));
@@ -173,6 +182,83 @@ register('exit', (cmd) => {
   const rawArgs = cmd.args.map(a => a.parts.map(p => p.type === 'Literal' ? p.value : '').join(''));
   const code = rawArgs[0] ?? '0';
   return { command: `exit ${code}`, warnings: [], usedFallback: true };
+});
+
+// mktemp
+register('mktemp', (cmd, _ctx, _tw) => {
+  const rawArgs = cmd.args.map(a => a.parts.map(p => p.type === 'Literal' ? p.value : '').join(''));
+  const hasDir = rawArgs.includes('-d') || rawArgs.includes('--directory');
+  if (hasDir) {
+    return {
+      command: "(New-Item -ItemType Directory -Path (Join-Path $env:TEMP ([System.IO.Path]::GetRandomFileName()))).FullName",
+      warnings: [],
+      usedFallback: true,
+    };
+  }
+  return { command: '(New-TemporaryFile).FullName', warnings: [], usedFallback: true };
+});
+
+// nohup
+register('nohup', (cmd, ctx, tw) => {
+  const args = cmd.args.map(a => tw(a, ctx));
+  if (args.length === 0) {
+    return { command: '# nohup: missing command', warnings: ['nohup: no command specified'], usedFallback: true };
+  }
+  return {
+    command: `Start-Process -NoNewWindow -FilePath ${args[0]}${args.length > 1 ? ` -ArgumentList ${args.slice(1).join(',')}` : ''}`,
+    warnings: [],
+    usedFallback: true,
+  };
+});
+
+// sudo — strip on Windows, just run the command
+register('sudo', (cmd, ctx, tw) => {
+  if (cmd.args.length === 0) {
+    return { command: '# sudo: missing command', warnings: ['sudo: no command specified'], usedFallback: true };
+  }
+  // Reconstruct inner command without sudo and re-dispatch
+  const innerCmd: SimpleCommandNode = {
+    type: 'SimpleCommand',
+    assignments: [],
+    name: cmd.args[0],
+    args: cmd.args.slice(1),
+    redirects: cmd.redirects,
+  };
+  const innerName = innerCmd.name!.parts.map(p => p.type === 'Literal' ? p.value : '').join('');
+  const innerTranslator = getTranslator(innerName);
+  if (innerTranslator) {
+    const result = innerTranslator(innerCmd, ctx, tw);
+    result.warnings.push('sudo: stripped (not applicable on Windows)');
+    return result;
+  }
+  // No translator — pass through without sudo
+  const args = cmd.args.map(a => tw(a, ctx));
+  return {
+    command: args.join(' '),
+    warnings: ['sudo: stripped (not applicable on Windows)'],
+    usedFallback: true,
+  };
+});
+
+// seq
+register('seq', (cmd, _ctx, _tw) => {
+  const rawArgs = cmd.args.map(a => a.parts.map(p => p.type === 'Literal' ? p.value : '').join(''));
+  const nums = rawArgs.filter(a => !a.startsWith('-'));
+  if (nums.length === 1) {
+    return { command: `1..${nums[0]}`, warnings: [], usedFallback: true };
+  }
+  if (nums.length === 2) {
+    return { command: `${nums[0]}..${nums[1]}`, warnings: [], usedFallback: true };
+  }
+  if (nums.length === 3) {
+    // seq FIRST INCREMENT LAST
+    return {
+      command: `for ($i = ${nums[0]}; $i -le ${nums[2]}; $i += ${nums[1]}) { $i }`,
+      warnings: [],
+      usedFallback: true,
+    };
+  }
+  return { command: '1..10', warnings: ['seq: could not parse arguments'], usedFallback: true };
 });
 
 // source / .

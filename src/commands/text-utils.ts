@@ -3,6 +3,91 @@ import { parseArgs, wordRawString } from './arg-parser.js';
 import { TranslatedCommand } from './index.js';
 
 // ============================================================
+// cut
+// ============================================================
+
+const CUT_FLAGS = [
+  { short: 'd', long: 'delimiter', takesValue: true },
+  { short: 'f', long: 'fields', takesValue: true },
+  { short: 'c', long: 'characters', takesValue: true },
+  { short: 's', long: 'only-delimited' },
+];
+
+export function cutTranslator(
+  cmd: SimpleCommandNode,
+  ctx: TransformContext,
+  tw: (w: WordNode, ctx: TransformContext) => string,
+): TranslatedCommand {
+  const rawArgs = cmd.args.map(a => wordRawString(a));
+  const parsed = parseArgs(rawArgs, CUT_FLAGS);
+
+  const delimiter = (parsed.flags['delimiter'] as string) ?? '\t';
+  const fields = parsed.flags['fields'] as string | undefined;
+  const chars = parsed.flags['characters'] as string | undefined;
+  const files = parsed.positional.map(f => `'${f.replace(/'/g, "''")}'`);
+
+  const prefix = files.length > 0 ? `Get-Content ${files.join(',')} | ` : '';
+
+  if (chars) {
+    // cut -c1-5 → substring
+    const rangeMatch = chars.match(/^(\d+)-(\d+)$/);
+    if (rangeMatch) {
+      const start = parseInt(rangeMatch[1], 10) - 1;
+      const len = parseInt(rangeMatch[2], 10) - start;
+      return {
+        command: `${prefix}ForEach-Object { $_.Substring(${start}, [Math]::Min(${len}, $_.Length - ${start})) }`,
+        warnings: [],
+        usedFallback: true,
+      };
+    }
+    // cut -cN → single char
+    const singleMatch = chars.match(/^(\d+)$/);
+    if (singleMatch) {
+      const idx = parseInt(singleMatch[1], 10) - 1;
+      return {
+        command: `${prefix}ForEach-Object { $_[${idx}] }`,
+        warnings: [],
+        usedFallback: true,
+      };
+    }
+  }
+
+  if (fields) {
+    const escapedDelim = delimiter.replace(/'/g, "''");
+    // Parse field spec: single field, range, or comma-separated
+    const fieldParts = fields.split(',');
+    const indices = fieldParts.map(f => {
+      const rangeMatch = f.match(/^(\d+)-(\d+)$/);
+      if (rangeMatch) {
+        const parts: string[] = [];
+        for (let i = parseInt(rangeMatch[1], 10); i <= parseInt(rangeMatch[2], 10); i++) {
+          parts.push(`$p[${i - 1}]`);
+        }
+        return parts.join(",'${escapedDelim}',");
+      }
+      return `$p[${parseInt(f, 10) - 1}]`;
+    });
+
+    if (fieldParts.length === 1 && !fields.includes('-')) {
+      const idx = parseInt(fields, 10) - 1;
+      return {
+        command: `${prefix}ForEach-Object { ($_ -split '${escapedDelim}')[${idx}] }`,
+        warnings: [],
+        usedFallback: true,
+      };
+    }
+
+    return {
+      command: `${prefix}ForEach-Object { $p = $_ -split '${escapedDelim}'; ${indices.join(" + '${escapedDelim}' + ")} }`,
+      warnings: [],
+      usedFallback: true,
+    };
+  }
+
+  return { command: `${prefix}# cut: no field or character spec`, warnings: ['cut: -f or -c required'], usedFallback: true };
+}
+
+// ============================================================
 // sort
 // ============================================================
 
