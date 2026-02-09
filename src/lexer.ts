@@ -393,7 +393,7 @@ export function lex(input: string): Token[] {
         tokens.push({ type: TokenType.And, value: '&&' });
       } else {
         i++;
-        tokens.push({ type: TokenType.Semi, value: ';' });
+        tokens.push({ type: TokenType.Background, value: '&' });
       }
       continue;
     }

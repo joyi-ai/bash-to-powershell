@@ -12,9 +12,10 @@ describe('ls', () => {
   it('-l (long format)', () => {
     const result = transpile('ls -l', { availableTools: noTools });
     expect(result).toContain('Get-ChildItem');
-    expect(result).toContain('Format-Table');
+    expect(result).toContain('ForEach-Object');
     expect(result).toContain('Mode');
     expect(result).toContain('LastWriteTime');
+    expect(result).toContain('$_.Name');
   });
 
   it('-a (show hidden)', () => {
@@ -26,7 +27,7 @@ describe('ls', () => {
   it('-la (combined)', () => {
     const result = transpile('ls -la', { availableTools: noTools });
     expect(result).toContain('-Force');
-    expect(result).toContain('Format-Table');
+    expect(result).toContain('ForEach-Object');
   });
 
   it('-R (recursive)', () => {

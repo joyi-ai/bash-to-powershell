@@ -18,16 +18,19 @@ npm install bash-to-powershell
 import { transpile } from 'bash-to-powershell';
 
 transpile('ls -la src/');
-// → "Get-ChildItem -Path src/ -Force | Format-Table Mode, LastWriteTime, Length, Name"
+// → "Get-ChildItem -Path src/ -Force | ForEach-Object { ... "$m  $s  $d  $($_.Name)" }"
 
 transpile('grep -r "TODO" src/ | head -20');
-// → "Get-ChildItem -Recurse -File -Path 'src/' | Select-String -Pattern 'TODO' | Select-Object -First 20"
+// → "Get-ChildItem -Recurse ... | Select-String ... | ForEach-Object { "$($_.Path):$($_.Line)" } | Select-Object -First 20"
 
 transpile('cat file.txt | grep "error" | wc -l');
-// → "Get-Content file.txt | Select-String -Pattern 'error' | Measure-Object -Line"
+// → "Get-Content file.txt | Select-String -Pattern 'error' | ForEach-Object { $_.Line } | (Measure-Object -Line).Lines"
 
 transpile('cd frontend && npm install');
 // → "Set-Location frontend; if ($?) { npm install }"
+
+transpile('node server.js &');
+// → "Start-Job -ScriptBlock { node server.js }"
 ```
 
 ### With native tool detection
@@ -80,11 +83,18 @@ const result = transpileWithMeta('rm -rf dist && mkdir -p build');
 
 **Shell constructs:**
 - Pipes (`|`), chains (`&&`, `||`, `;`), subshells (`(...)`)
+- Background processes (`&` → `Start-Job`)
 - Redirects (`>`, `>>`, `2>&1`, `2>/dev/null`)
 - Variable expansion (`$HOME`, `${VAR}`, `$?`, `$@`, `$1`)
 - Command substitution (`$(...)`)
 - Quoting (`'...'`, `"..."`, `$'...'`)
-- Path translation (`/dev/null` → `$null`, `/tmp` → `$env:TEMP`)
+- Path translation (`/dev/null` → `$null`, `/tmp` → `$env:TEMP`, `~` → `$env:USERPROFILE`)
+
+**Output compatibility:**
+- `grep` fallback formats output as `file:line:content` (matches bash grep)
+- `ls -l` outputs `mode size date name` (approximates bash ls)
+- `find` outputs file paths (one per line, like bash find)
+- Native tool paths (`rg`, `fd`) produce identical output to Linux
 
 **Not supported** (by design — these are uncommon in agent output):
 - Control flow (`if`/`for`/`while`/`case`)
@@ -119,7 +129,7 @@ bash string → Lexer → Tokens → Parser → AST → Transformer → PowerShe
 
 ## Tests
 
-447 tests across 27 files covering every command translator, the core transformer, real-world agent patterns, and edge cases.
+477 tests across 28 files covering every command translator, the core transformer, output compatibility, real-world agent patterns, and edge cases.
 
 ```bash
 npm test            # run all tests

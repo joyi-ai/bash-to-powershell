@@ -63,8 +63,11 @@ export function lsTranslator(
   }
 
   if (longFormat) {
-    // Format-Table gives ls -l style output
-    pipes.push('Format-Table Mode, LastWriteTime, Length, Name');
+    // Format output to resemble bash ls -l: mode size date name
+    pipes.push("ForEach-Object { $m = $_.Mode; $s = if($_.PSIsContainer) { '<DIR>' } else { $_.Length }; $d = $_.LastWriteTime.ToString('MMM dd HH:mm'); \"$m  $s  $d  $($_.Name)\" }");
+  } else {
+    // Bare ls: output names only (one per line, like ls -1)
+    pipes.push('Select-Object -ExpandProperty Name');
   }
 
   let result = parts.join(' ');

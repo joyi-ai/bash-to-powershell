@@ -257,12 +257,30 @@ function translateCompoundWord(parts: WordPart[], ctx: TransformContext): string
 // PATH TRANSLATION
 // ============================================================
 
-/** Translate /tmp paths in command arguments (not /dev/* which is redirect-only) */
+/** Translate /tmp and ~ paths in command arguments (not /dev/* which is redirect-only) */
 function translatePathInArgs(word: WordNode): WordNode {
   if (word.parts.length !== 1 || word.parts[0].type !== 'Literal') return word;
   const val = word.parts[0].value;
+  const first = val.charCodeAt(0);
+
+  // Tilde expansion: ~ or ~/path
+  if (first === 0x7E /* ~ */) {
+    if (val === '~') {
+      return { type: 'Word', parts: [{ type: 'Variable', name: 'HOME', braced: false }] };
+    }
+    if (val.charCodeAt(1) === 0x2F /* / */) {
+      return {
+        type: 'Word',
+        parts: [
+          { type: 'Variable', name: 'HOME', braced: false },
+          { type: 'Literal', value: '\\' + val.slice(2), quoting: 'unquoted' },
+        ],
+      };
+    }
+  }
+
   // Fast reject: if first char isn't /, no path to translate
-  if (val.charCodeAt(0) !== 0x2F) return word;
+  if (first !== 0x2F) return word;
   if (val === '/tmp' || val === '/tmp/') {
     return { type: 'Word', parts: [{ type: 'Variable', name: 'TEMP', braced: false }] };
   }
@@ -362,7 +380,11 @@ function translateStatement(stmt: StatementNode, ctx: TransformContext): string 
 function translatePipeline(pipeline: PipelineNode, ctx: TransformContext): string {
   const commands = pipeline.commands.map(c => translateCommand(c, ctx));
   const joined = commands.join(' | ');
-  return pipeline.negated ? `!(${joined})` : joined;
+  const expr = pipeline.negated ? `!(${joined})` : joined;
+  if (pipeline.background) {
+    return `Start-Job -ScriptBlock { ${expr} }`;
+  }
+  return expr;
 }
 
 function translateLogicalExpr(expr: LogicalExprNode, ctx: TransformContext): string {

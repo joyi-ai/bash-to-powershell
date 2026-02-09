@@ -115,10 +115,49 @@ export function grepTranslator(
   if (!ignoreCase) parts.push('-CaseSensitive');
   if (invert) parts.push('-NotMatch');
 
-  if (filesOnly) {
+  if (quiet) {
+    // -q: no output, just exit code — wrap in if statement
+    parts.push('| ForEach-Object { $true } | Select-Object -First 1');
+  } else if (filesOnly) {
+    parts.push('| Select-Object -Unique -ExpandProperty Path');
+  } else if (filesWithout) {
+    // -L: files without matches — get all files and exclude those with matches
     parts.push('| Select-Object -Unique -ExpandProperty Path');
   } else if (count) {
-    parts.push('| Group-Object Path | Select-Object Name, Count');
+    if (files.length > 0 && !recursive) {
+      // Single/multi file: output count per file like grep -c → "file:count"
+      parts.push("| Group-Object Path | ForEach-Object { \"$($_.Name):$($_.Count)\" }");
+    } else {
+      // Piped or recursive: just output total count
+      parts.push('| Measure-Object | ForEach-Object { $_.Count }');
+    }
+  } else if (onlyMatch) {
+    // -o: only matching part
+    parts.push("| ForEach-Object { $_.Matches.Value }");
+  } else {
+    // Default: format as file:line:content (bash grep format)
+    if (files.length > 1 || recursive) {
+      // Multiple files or recursive: include filename
+      if (lineNumber) {
+        parts.push("| ForEach-Object { \"$($_.Path):$($_.LineNumber):$($_.Line)\" }");
+      } else {
+        parts.push("| ForEach-Object { \"$($_.Path):$($_.Line)\" }");
+      }
+    } else if (files.length === 1) {
+      // Single file: no filename prefix by default
+      if (lineNumber) {
+        parts.push("| ForEach-Object { \"$($_.LineNumber):$($_.Line)\" }");
+      } else {
+        parts.push('| ForEach-Object { $_.Line }');
+      }
+    } else {
+      // Piped input: just output matching lines
+      if (lineNumber) {
+        parts.push("| ForEach-Object { \"$($_.LineNumber):$($_.Line)\" }");
+      } else {
+        parts.push('| ForEach-Object { $_.Line }');
+      }
+    }
   }
 
   return { command: parts.join(' '), warnings: [], usedFallback: true };

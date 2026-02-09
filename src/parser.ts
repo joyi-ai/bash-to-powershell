@@ -33,7 +33,7 @@ export function parse(tokens: Token[]): ScriptNode {
   }
 
   function isSeparator(t: Token): boolean {
-    return t.type === TokenType.Semi || t.type === TokenType.Newline;
+    return t.type === TokenType.Semi || t.type === TokenType.Newline || t.type === TokenType.Background;
   }
 
   function isOperator(t: Token): boolean {
@@ -300,7 +300,10 @@ export function parse(tokens: Token[]): ScriptNode {
       skipNewlines();
       commands.push(parseCommand());
     }
-    return { type: 'Pipeline', commands, negated };
+    // Check for trailing & (background)
+    const background = peek().type === TokenType.Background;
+    if (background) advance();
+    return { type: 'Pipeline', commands, negated, background };
   }
 
   function parseAndOr(): StatementNode {

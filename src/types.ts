@@ -12,6 +12,7 @@ export enum TokenType {
   And = 'And',
   Or = 'Or',
   Semi = 'Semi',
+  Background = 'Background',
   Newline = 'Newline',
 
   RedirectOut = 'RedirectOut',
@@ -50,6 +51,7 @@ export interface PipelineNode {
   type: 'Pipeline';
   commands: CommandNode[];
   negated: boolean;
+  background: boolean;
 }
 
 export interface LogicalExprNode {

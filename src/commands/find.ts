@@ -157,11 +157,12 @@ export function findTranslator(
 
   if (doDelete) {
     result += ' | Remove-Item -Force';
-  }
-
-  if (execCmd.length > 0) {
+  } else if (execCmd.length > 0) {
     const psExec = execCmd.join(' ').replace(/\{\}/g, '$_.FullName');
     result += ` | ForEach-Object { ${psExec} }`;
+  } else {
+    // Output paths like bash find (one per line)
+    result += ' | Select-Object -ExpandProperty FullName';
   }
 
   return { command: result, warnings: [], usedFallback: true };
