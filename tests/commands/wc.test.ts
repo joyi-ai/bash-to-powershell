@@ -39,7 +39,7 @@ describe('wc', () => {
   it('-l piped (no file)', () => {
     const result = transpile('wc -l', { availableTools: noTools });
     expect(result).toContain('Measure-Object -Line');
-    expect(result).toContain('.Lines');
+    expect(result).toContain('$_.Lines');
     expect(result).not.toContain('Get-Content');
   });
 
@@ -53,6 +53,7 @@ describe('wc', () => {
   it('-w piped (no file)', () => {
     const result = transpile('wc -w', { availableTools: noTools });
     expect(result).toContain('Measure-Object -Word');
+    expect(result).toContain('$_.Words');
     expect(result).not.toContain('Get-Content');
   });
 });

@@ -34,8 +34,9 @@ export function wcTranslator(
         usedFallback: true,
       };
     }
+    // Piped: must be a valid pipe receiver (no expression wrapping)
     return {
-      command: '(Measure-Object -Line).Lines',
+      command: 'Measure-Object -Line | ForEach-Object { $_.Lines }',
       warnings: [],
       usedFallback: true,
     };
@@ -50,7 +51,7 @@ export function wcTranslator(
       };
     }
     return {
-      command: '(Measure-Object -Word).Words',
+      command: 'Measure-Object -Word | ForEach-Object { $_.Words }',
       warnings: [],
       usedFallback: true,
     };
@@ -65,7 +66,7 @@ export function wcTranslator(
       };
     }
     return {
-      command: '(Measure-Object -Character).Characters',
+      command: 'Measure-Object -Character | ForEach-Object { $_.Characters }',
       warnings: [],
       usedFallback: true,
     };

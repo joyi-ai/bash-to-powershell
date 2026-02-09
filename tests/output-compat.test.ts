@@ -37,8 +37,16 @@ describe('grep output formatting (bash-compatible)', () => {
     expect(result).toContain('$_.Line');
   });
 
-  it('-c with files: outputs file:count format', () => {
+  it('-c with single file: outputs just count (not file:count)', () => {
     const result = transpile('grep -c "error" file.txt', { availableTools: noTools });
+    expect(result).toContain('Measure-Object');
+    expect(result).toContain('$_.Count');
+    // Single file should NOT include filename in count output
+    expect(result).not.toContain('$_.Name');
+  });
+
+  it('-c with multiple files: outputs file:count format', () => {
+    const result = transpile('grep -c "error" a.txt b.txt', { availableTools: noTools });
     expect(result).toContain('$_.Name');
     expect(result).toContain('$_.Count');
   });
@@ -61,8 +69,75 @@ describe('grep output formatting (bash-compatible)', () => {
 
   it('piped grep: outputs matching lines only', () => {
     const result = transpile('cat file.txt | grep "error"', { availableTools: noTools });
-    // The grep part (2nd command) should output lines
     expect(result).toContain('ForEach-Object { $_.Line }');
+  });
+});
+
+describe('grep pipeline correctness (anti-gaming)', () => {
+  it('piped grep does NOT insert Get-ChildItem', () => {
+    const result = transpile('cat file.txt | grep "error"', { availableTools: noTools });
+    // The grep command should NOT prepend Get-ChildItem when receiving piped input
+    // Split on | to get the grep part
+    const parts = result.split(' | ');
+    const grepPart = parts.slice(1).join(' | '); // everything after Get-Content
+    expect(grepPart).not.toContain('Get-ChildItem');
+  });
+
+  it('bare grep (piped) is just Select-String + formatter', () => {
+    const result = transpile('grep "error"', { availableTools: noTools });
+    expect(result).not.toContain('Get-ChildItem');
+    expect(result).toContain('Select-String');
+    expect(result).toContain('ForEach-Object');
+  });
+
+  it('grep with file does NOT insert Get-ChildItem', () => {
+    const result = transpile('grep "error" file.txt', { availableTools: noTools });
+    expect(result).not.toContain('Get-ChildItem');
+    expect(result).toContain('Select-String');
+    expect(result).toContain('-Path');
+  });
+
+  it('recursive grep DOES use Get-ChildItem', () => {
+    const result = transpile('grep -r "error" src/', { availableTools: noTools });
+    expect(result).toContain('Get-ChildItem');
+    expect(result).toContain('-Recurse');
+  });
+});
+
+describe('wc pipeline correctness (anti-gaming)', () => {
+  it('piped wc -l uses pipe-compatible syntax', () => {
+    const result = transpile('wc -l', { availableTools: noTools });
+    // Must NOT use (expression).Property as pipe receiver
+    expect(result).not.toMatch(/^\(/); // should not start with (
+    expect(result).toContain('Measure-Object -Line');
+    expect(result).toContain('ForEach-Object');
+    expect(result).toContain('$_.Lines');
+  });
+
+  it('cat | grep | wc -l produces valid pipeline', () => {
+    const result = transpile('cat file.txt | grep "error" | wc -l', { availableTools: noTools });
+    // Full pipeline should not have expression syntax as pipe receiver
+    expect(result).not.toContain('| (Measure-Object');
+    expect(result).toContain('| Measure-Object -Line | ForEach-Object');
+  });
+
+  it('wc -l with file uses expression form (not piped)', () => {
+    const result = transpile('wc -l file.txt', { availableTools: noTools });
+    // With file, it starts its own pipeline so expression form is fine
+    expect(result).toContain('(Get-Content');
+    expect(result).toContain('.Lines');
+  });
+
+  it('piped wc -w uses pipe-compatible syntax', () => {
+    const result = transpile('wc -w', { availableTools: noTools });
+    expect(result).toContain('Measure-Object -Word | ForEach-Object');
+    expect(result).toContain('$_.Words');
+  });
+
+  it('piped wc -c uses pipe-compatible syntax', () => {
+    const result = transpile('wc -c', { availableTools: noTools });
+    expect(result).toContain('Measure-Object -Character | ForEach-Object');
+    expect(result).toContain('$_.Characters');
   });
 });
 
@@ -149,6 +224,12 @@ describe('background process (&)', () => {
     expect(result).not.toContain('Start-Job');
     expect(result).toContain('if ($?)');
   });
+
+  it('2>&1 is not affected by & change', () => {
+    const result = transpile('cmd 2>&1', { availableTools: noTools });
+    expect(result).toContain('2>&1');
+    expect(result).not.toContain('Start-Job');
+  });
 });
 
 describe('tilde expansion', () => {
@@ -173,5 +254,52 @@ describe('tilde expansion', () => {
     const result = transpile('echo foo~bar', { availableTools: noTools });
     expect(result).not.toContain('$env:USERPROFILE');
     expect(result).toContain('foo~bar');
+  });
+
+  it('double-quoted ~/path is NOT expanded (bash semantics)', () => {
+    const result = transpile('echo "~/projects"', { availableTools: noTools });
+    expect(result).not.toContain('$env:USERPROFILE');
+    expect(result).toContain('~/projects');
+  });
+
+  it('single-quoted ~/path is NOT expanded', () => {
+    const result = transpile("echo '~/projects'", { availableTools: noTools });
+    expect(result).not.toContain('$env:USERPROFILE');
+    expect(result).toContain('~/projects');
+  });
+});
+
+describe('full pipeline integration (anti-gaming)', () => {
+  it('cat | grep | wc -l: no broken fragments', () => {
+    const result = transpile('cat file.txt | grep "error" | wc -l', { availableTools: noTools });
+    // Should be: Get-Content file.txt | Select-String ... | ForEach-Object { $_.Line } | Measure-Object -Line | ForEach-Object { $_.Lines }
+    expect(result).toContain('Get-Content');
+    expect(result).toContain('Select-String');
+    expect(result).toContain('Measure-Object -Line');
+    // No broken Get-ChildItem insertion
+    expect(result).not.toContain('Get-ChildItem');
+    // No expression-as-pipe-receiver
+    expect(result).not.toContain('| (Measure-Object');
+  });
+
+  it('grep pattern file | head -5: valid pipeline', () => {
+    const result = transpile('grep "TODO" file.txt | head -5', { availableTools: noTools });
+    expect(result).toContain('Select-String');
+    expect(result).toContain('Select-Object -First 5');
+    expect(result).not.toContain('Get-ChildItem');
+  });
+
+  it('find | grep: no double Get-ChildItem', () => {
+    const result = transpile('find . -name "*.ts" | grep "import"', { availableTools: noTools });
+    // find uses Get-ChildItem, but piped grep should NOT add another
+    const gciCount = (result.match(/Get-ChildItem/g) || []).length;
+    expect(gciCount).toBe(1);
+  });
+
+  it('echo | grep: clean pipeline', () => {
+    const result = transpile('echo "hello world" | grep "hello"', { availableTools: noTools });
+    expect(result).toContain('Write-Output');
+    expect(result).toContain('Select-String');
+    expect(result).not.toContain('Get-ChildItem');
   });
 });

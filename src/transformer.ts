@@ -263,8 +263,8 @@ function translatePathInArgs(word: WordNode): WordNode {
   const val = word.parts[0].value;
   const first = val.charCodeAt(0);
 
-  // Tilde expansion: ~ or ~/path
-  if (first === 0x7E /* ~ */) {
+  // Tilde expansion: ~ or ~/path (only when unquoted — bash doesn't expand ~ in quotes)
+  if (first === 0x7E /* ~ */ && word.parts[0].quoting === 'unquoted') {
     if (val === '~') {
       return { type: 'Word', parts: [{ type: 'Variable', name: 'HOME', braced: false }] };
     }

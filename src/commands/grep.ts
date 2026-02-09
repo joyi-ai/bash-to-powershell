@@ -91,12 +91,12 @@ export function grepTranslator(
 
   // Fallback: Select-String
   const parts: string[] = [];
+  const piped = !recursive && files.length === 0; // receiving input from pipe
 
-  if (recursive || files.length === 0) {
+  if (recursive) {
     // Need Get-ChildItem for recursion
     const gcParts = ['Get-ChildItem'];
-    if (recursive) gcParts.push('-Recurse');
-    gcParts.push('-File');
+    gcParts.push('-Recurse', '-File');
     if (files.length > 0) {
       gcParts.push('-Path', files.map(f => `'${f.replace(/'/g, "''")}'`).join(','));
     }
@@ -124,11 +124,11 @@ export function grepTranslator(
     // -L: files without matches — get all files and exclude those with matches
     parts.push('| Select-Object -Unique -ExpandProperty Path');
   } else if (count) {
-    if (files.length > 0 && !recursive) {
-      // Single/multi file: output count per file like grep -c → "file:count"
+    if (files.length > 1) {
+      // Multiple files: output file:count per file
       parts.push("| Group-Object Path | ForEach-Object { \"$($_.Name):$($_.Count)\" }");
     } else {
-      // Piped or recursive: just output total count
+      // Single file, piped, or recursive: just output count
       parts.push('| Measure-Object | ForEach-Object { $_.Count }');
     }
   } else if (onlyMatch) {
