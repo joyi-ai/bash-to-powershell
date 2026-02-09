@@ -12,7 +12,23 @@ export { TranspileOptions, TranspileResult, ToolAvailability } from './types.js'
  * Returns just the PowerShell string.
  */
 export function transpile(bash: string, options?: TranspileOptions): string {
-  return transpileWithMeta(bash, options).powershell;
+  if (!bash || !bash.trim()) return '';
+
+  const tools = options?.availableTools ?? detectTools();
+  const ctx: TransformContext = {
+    tools,
+    options: options ?? {},
+    warnings: [],
+    unsupported: [],
+    usedFallbacks: false,
+  };
+
+  try {
+    return translateScript(parse(lex(bash)), ctx);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return `# TRANSPILE ERROR: ${message}\n# Original: ${bash}`;
+  }
 }
 
 const EMPTY_RESULT: TranspileResult = Object.freeze({ powershell: '', usedFallbacks: false, warnings: [], unsupported: [] });
