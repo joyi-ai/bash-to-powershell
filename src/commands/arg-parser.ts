@@ -11,6 +11,23 @@ export interface ParsedArgs {
   positional: string[];
 }
 
+// Cache compiled flag maps per specs array reference
+const specsCache = new WeakMap<FlagSpec[], { shortMap: Map<string, FlagSpec>; longMap: Map<string, FlagSpec> }>();
+
+function getSpecMaps(specs: FlagSpec[]) {
+  let cached = specsCache.get(specs);
+  if (cached) return cached;
+  const shortMap = new Map<string, FlagSpec>();
+  const longMap = new Map<string, FlagSpec>();
+  for (const spec of specs) {
+    if (spec.short) shortMap.set(spec.short, spec);
+    if (spec.long) longMap.set(spec.long, spec);
+  }
+  cached = { shortMap, longMap };
+  specsCache.set(specs, cached);
+  return cached;
+}
+
 /**
  * Parse command arguments against a flag specification.
  * Handles both -x, --long, -xyz (combined short), and --flag=value forms.
@@ -22,12 +39,7 @@ export function parseArgs(
   const flags: Record<string, string | boolean> = {};
   const positional: string[] = [];
 
-  const shortMap = new Map<string, FlagSpec>();
-  const longMap = new Map<string, FlagSpec>();
-  for (const spec of specs) {
-    if (spec.short) shortMap.set(spec.short, spec);
-    if (spec.long) longMap.set(spec.long, spec);
-  }
+  const { shortMap, longMap } = getSpecMaps(specs);
 
   let i = 0;
   while (i < args.length) {
@@ -114,10 +126,14 @@ export function getArgStrings(
 
 /** Helper: get the raw (untranslated) string from a word */
 export function wordRawString(word: WordNode): string {
-  return word.parts.map(p => {
-    if (p.type === 'Literal') return p.value;
-    if (p.type === 'Variable') return p.braced ? `\${${p.name}}` : `$${p.name}`;
-    if (p.type === 'CommandSubstitution') return `$(${p.command})`;
-    return '';
-  }).join('');
+  const parts = word.parts;
+  if (parts.length === 1 && parts[0].type === 'Literal') return parts[0].value;
+  let result = '';
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    if (p.type === 'Literal') result += p.value;
+    else if (p.type === 'Variable') result += p.braced ? '${' + p.name + '}' : '$' + p.name;
+    else if (p.type === 'CommandSubstitution') result += '$(' + p.command + ')';
+  }
+  return result;
 }

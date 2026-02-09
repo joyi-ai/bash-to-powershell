@@ -15,6 +15,8 @@ export function transpile(bash: string, options?: TranspileOptions): string {
   return transpileWithMeta(bash, options).powershell;
 }
 
+const EMPTY_RESULT: TranspileResult = Object.freeze({ powershell: '', usedFallbacks: false, warnings: [], unsupported: [] });
+
 /**
  * Transpile with full metadata (warnings, fallback info).
  */
@@ -23,17 +25,13 @@ export function transpileWithMeta(
   options: TranspileOptions = {},
 ): TranspileResult {
   if (!bash || !bash.trim()) {
-    return { powershell: '', usedFallbacks: false, warnings: [], unsupported: [] };
+    return EMPTY_RESULT;
   }
 
   const tools = options.availableTools ?? detectTools();
   const ctx: TransformContext = {
     tools,
-    options: {
-      preferNativeTools: true,
-      psVersion: '5.1',
-      ...options,
-    },
+    options,
     warnings: [],
     unsupported: [],
     usedFallbacks: false,
