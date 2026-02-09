@@ -64,16 +64,18 @@ const result = transpileWithMeta('rm -rf dist && mkdir -p build');
 
 ## Supported Commands
 
-**40+ commands** with flag-level translation:
+**51 commands** with flag-level translation:
 
 | Category | Commands |
 |----------|----------|
 | File ops | `ls`, `cat`, `head`, `tail`, `cp`, `mv`, `rm`, `mkdir`, `touch`, `ln`, `chmod` |
 | Search | `grep`, `egrep`, `fgrep`, `find` (with `rg`/`fd` dual-path) |
-| Text processing | `sed`, `awk`, `sort`, `uniq`, `tr`, `tee`, `diff`, `xargs`, `wc` |
-| Shell builtins | `cd`, `pwd`, `echo`, `printf`, `export`, `unset`, `env`, `test`, `[`, `true`, `false`, `source` |
-| System | `which`, `command`, `ps`, `kill`, `whoami`, `uname`, `date`, `sleep`, `history`, `du`, `df` |
+| Text processing | `sed`, `awk`, `sort`, `uniq`, `cut`, `tr`, `tee`, `diff`, `xargs`, `wc` |
+| Shell builtins | `cd`, `pwd`, `echo`, `printf`, `export`, `unset`, `env`, `test`, `[`, `true`, `false`, `source`, `seq` |
+| Process management | `ps`, `kill`, `pkill`, `killall`, `pgrep`, `lsof` |
+| System | `which`, `command`, `whoami`, `uname`, `date`, `sleep`, `history`, `du`, `df`, `mktemp`, `nohup`, `sudo` |
 | Network | `curl`, `wget` (with `curl.exe` dual-path) |
+| Archive | `zip`, `unzip` |
 | Path utils | `basename`, `dirname`, `realpath`, `readlink` |
 
 **Shell constructs:**
@@ -117,7 +119,7 @@ bash string → Lexer → Tokens → Parser → AST → Transformer → PowerShe
 
 ## Tests
 
-413 tests across 24 files covering every command translator, the core transformer, real-world agent patterns, and edge cases.
+447 tests across 27 files covering every command translator, the core transformer, real-world agent patterns, and edge cases.
 
 ```bash
 npm test            # run all tests
