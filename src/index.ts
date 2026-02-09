@@ -7,12 +7,20 @@ import { detectTools } from './commands/fallback.js';
 
 export { TranspileOptions, TranspileResult, ToolAvailability } from './types.js';
 
+function isBlank(s: string): boolean {
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c !== 0x20 && c !== 0x09 && c !== 0x0A && c !== 0x0D) return false;
+  }
+  return true;
+}
+
 /**
  * Transpile a bash command string to PowerShell.
  * Returns just the PowerShell string.
  */
 export function transpile(bash: string, options?: TranspileOptions): string {
-  if (!bash || !bash.trim()) return '';
+  if (!bash || isBlank(bash)) return '';
 
   const tools = options?.availableTools ?? detectTools();
   const ctx: TransformContext = {
@@ -40,7 +48,7 @@ export function transpileWithMeta(
   bash: string,
   options: TranspileOptions = {},
 ): TranspileResult {
-  if (!bash || !bash.trim()) {
+  if (!bash || isBlank(bash)) {
     return EMPTY_RESULT;
   }
 
