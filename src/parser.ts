@@ -6,15 +6,18 @@ import {
   WordPart, LiteralPart, VariablePart, CommandSubstitutionPart,
 } from './types.js';
 
+const EOF_TOKEN: Token = { type: TokenType.EOF, value: '' };
+
 export function parse(tokens: Token[]): ScriptNode {
   let pos = 0;
+  const len = tokens.length;
 
   function peek(): Token {
-    return tokens[pos] ?? { type: TokenType.EOF, value: '' };
+    return pos < len ? tokens[pos] : EOF_TOKEN;
   }
 
   function advance(): Token {
-    return tokens[pos++] ?? { type: TokenType.EOF, value: '' };
+    return pos < len ? tokens[pos++] : EOF_TOKEN;
   }
 
   function expect(type: TokenType): Token {
@@ -26,7 +29,7 @@ export function parse(tokens: Token[]): ScriptNode {
   }
 
   function isAtEnd(): boolean {
-    return peek().type === TokenType.EOF;
+    return pos >= len || tokens[pos].type === TokenType.EOF;
   }
 
   function isSeparator(t: Token): boolean {
@@ -38,7 +41,7 @@ export function parse(tokens: Token[]): ScriptNode {
   }
 
   function skipNewlines(): void {
-    while (peek().type === TokenType.Newline) advance();
+    while (pos < len && tokens[pos].type === TokenType.Newline) pos++;
   }
 
   /** Parse a word token into a WordNode with parts */
@@ -57,71 +60,99 @@ export function parse(tokens: Token[]): ScriptNode {
     }
 
     const quoting = tokenType === TokenType.DoubleQuoted ? 'double' : 'unquoted';
+
+    // Fast path: no $ in value means no variables or command substitutions
+    if (value.indexOf('$') === -1) {
+      return [{ type: 'Literal', value, quoting }];
+    }
+
     const parts: WordPart[] = [];
     let i = 0;
-    let literal = '';
+    const vlen = value.length;
+    let litStart = 0; // track literal start for slice
 
     function flushLiteral() {
-      if (literal) {
-        parts.push({ type: 'Literal', value: literal, quoting } as LiteralPart);
-        literal = '';
+      if (i > litStart) {
+        parts.push({ type: 'Literal', value: value.slice(litStart, i), quoting } as LiteralPart);
       }
     }
 
-    while (i < value.length) {
-      const ch = value[i];
+    while (i < vlen) {
+      const cc = value.charCodeAt(i);
+
+      if (cc !== 0x24 /* $ */) { i++; continue; }
+
+      // We have a $ — check what follows
+      if (i + 1 >= vlen) { i++; continue; }
+      const next = value.charCodeAt(i + 1);
 
       // Command substitution: $(...)
-      if (ch === '$' && value[i + 1] === '(') {
+      if (next === 0x28 /* ( */) {
         flushLiteral();
         i += 2;
         let depth = 1;
-        let cmd = '';
-        while (i < value.length && depth > 0) {
-          if (value[i] === '(') depth++;
-          if (value[i] === ')') { depth--; if (depth === 0) { i++; break; } }
-          cmd += value[i++];
+        const cmdStart = i;
+        while (i < vlen && depth > 0) {
+          const c = value.charCodeAt(i);
+          if (c === 0x28) depth++;
+          if (c === 0x29 /* ) */) { depth--; if (depth === 0) break; }
+          i++;
         }
-        parts.push({ type: 'CommandSubstitution', command: cmd } as CommandSubstitutionPart);
+        parts.push({ type: 'CommandSubstitution', command: value.slice(cmdStart, i) } as CommandSubstitutionPart);
+        if (i < vlen) i++; // skip )
+        litStart = i;
         continue;
       }
 
       // Braced variable: ${VAR}
-      if (ch === '$' && value[i + 1] === '{') {
+      if (next === 0x7B /* { */) {
         flushLiteral();
         i += 2;
-        let varName = '';
-        while (i < value.length && value[i] !== '}') varName += value[i++];
-        if (i < value.length) i++; // skip }
-        parts.push({ type: 'Variable', name: varName, braced: true } as VariablePart);
+        const varStart = i;
+        while (i < vlen && value.charCodeAt(i) !== 0x7D /* } */) i++;
+        parts.push({ type: 'Variable', name: value.slice(varStart, i), braced: true } as VariablePart);
+        if (i < vlen) i++; // skip }
+        litStart = i;
         continue;
       }
 
-      // Simple variable: $VAR or $? $# $! $$ $@ $0-$9
-      if (ch === '$' && i + 1 < value.length) {
-        const next = value[i + 1];
-        if (/[a-zA-Z_]/.test(next)) {
-          flushLiteral();
-          i++; // skip $
-          let varName = '';
-          while (i < value.length && /[a-zA-Z_0-9]/.test(value[i])) {
-            varName += value[i++];
+      // Simple variable: $VAR (starts with a-zA-Z_)
+      if ((next >= 0x41 && next <= 0x5A) || (next >= 0x61 && next <= 0x7A) || next === 0x5F) {
+        flushLiteral();
+        i++; // skip $
+        const varStart = i;
+        i++; // skip first char (already validated)
+        while (i < vlen) {
+          const c = value.charCodeAt(i);
+          if ((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c === 0x5F || (c >= 0x30 && c <= 0x39)) {
+            i++;
+          } else {
+            break;
           }
-          parts.push({ type: 'Variable', name: varName, braced: false } as VariablePart);
-          continue;
         }
-        if (/[?#!$@0-9]/.test(next)) {
-          flushLiteral();
-          i++; // skip $
-          parts.push({ type: 'Variable', name: value[i++], braced: false } as VariablePart);
-          continue;
-        }
+        parts.push({ type: 'Variable', name: value.slice(varStart, i), braced: false } as VariablePart);
+        litStart = i;
+        continue;
       }
 
-      literal += value[i++];
+      // Special variable: $? $# $! $$ $@ $0-$9
+      if (next === 0x3F || next === 0x23 || next === 0x21 || next === 0x24 ||
+          next === 0x40 || (next >= 0x30 && next <= 0x39)) {
+        flushLiteral();
+        i++; // skip $
+        parts.push({ type: 'Variable', name: value[i++], braced: false } as VariablePart);
+        litStart = i;
+        continue;
+      }
+
+      // Just a literal $
+      i++;
     }
 
-    flushLiteral();
+    // Flush remaining literal
+    if (i > litStart) {
+      parts.push({ type: 'Literal', value: value.slice(litStart, i), quoting } as LiteralPart);
+    }
     return parts.length > 0 ? parts : [{ type: 'Literal', value: '', quoting }];
   }
 
@@ -142,10 +173,18 @@ export function parse(tokens: Token[]): ScriptNode {
   /** Check if a word token looks like an assignment: VAR=value */
   function isAssignment(t: Token): boolean {
     if (t.type !== TokenType.Word) return false;
-    const eq = t.value.indexOf('=');
+    const v = t.value;
+    const eq = v.indexOf('=');
     if (eq <= 0) return false;
-    const name = t.value.slice(0, eq);
-    return /^[a-zA-Z_][a-zA-Z_0-9]*$/.test(name);
+    // Check first char: [a-zA-Z_]
+    const c0 = v.charCodeAt(0);
+    if (!((c0 >= 0x41 && c0 <= 0x5A) || (c0 >= 0x61 && c0 <= 0x7A) || c0 === 0x5F)) return false;
+    // Check remaining chars before =: [a-zA-Z_0-9]
+    for (let j = 1; j < eq; j++) {
+      const c = v.charCodeAt(j);
+      if (!((c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c === 0x5F || (c >= 0x30 && c <= 0x39))) return false;
+    }
+    return true;
   }
 
   function parseAssignment(t: Token): AssignmentNode {
